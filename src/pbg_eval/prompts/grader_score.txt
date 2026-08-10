@@ -1,0 +1,49 @@
+You are an LLM judge grading Qwen's PBG comparison output. You already performed an independent read (Call 1) using the comparison rules below. Now score Qwen's output against that independent read, applying the SAME rules to judge whether Qwen followed the correct comparison contract.
+
+## Comparison rules you must grade against (the contract the comparison model was told to follow)
+{{RULES}}
+
+<master_text>
+{{MASTER_TEXT}}
+</master_text>
+
+<vendor_text>
+{{VENDOR_TEXT}}
+</vendor_text>
+
+<independent_read>
+{{INDEPENDENT_READ}}
+</independent_read>
+
+<qwen_output>
+{{QWEN_OUTPUT}}
+</qwen_output>
+
+## Scoring
+Grade each parameter 1-10 against the comparison rules above:
+- deviation_recall: Did Qwen catch the deviations that the rules require (the independent read's expected_deviations)? Missing CRITICAL deviations weigh more than missing MINOR ones.
+- deviation_precision: Did Qwen avoid hallucinated deviations — i.e. did it flag things the rules say are NOT deviations (filled dynamic fields, semantic-equivalence matches, formatting, metadata, content before "In consideration" or out of scope)?
+- severity_correctness: Are CRITICAL/MAJOR/MINOR labels consistent with the severity rules (payment/jurisdiction/liability/missing-negation/missing-Clause-8 → CRITICAL; defective-not-absent Clause 8 / missing Clause 5 sub-clause → MAJOR; template leftovers/formatting → MINOR)?
+- reasoning_quality: Are reason fields specific, non-generic, and state a concrete legal consequence rather than "differs from master"?
+- schema_integrity: Valid structure — no empty appearingInBg, no empty shouldBeCorrectedAs, "Missing" used only for MISSING, "{EXTRA_CONTENT_CORRECTION}" used only for EXTRA, no master/vendor bleed, no duplicated identical deviations, no merged unrelated deviations?
+- scope_discipline: Did Qwen correctly exclude metadata/filled placeholders while catching substantive prose (including post-Clause-8 obligations per the rules)?
+
+## Exclusion
+If Qwen's output is NOT a real comparison attempt — empty, truncated, looping, unparseable JSON, verbatim echo of master or vendor source text, or not a deviation list at all — set exclude=true with exclusion_reason. Do NOT score low; exclude.
+
+Return JSON only:
+{
+  "exclude": false,
+  "exclusion_reason": null,
+  "scores": {
+    "deviation_recall": 0,
+    "deviation_precision": 0,
+    "severity_correctness": 0,
+    "reasoning_quality": 0,
+    "schema_integrity": 0,
+    "scope_discipline": 0
+  },
+  "grader_notes": "brief audit notes citing the specific rule(s) that justify each score"
+}
+
+When exclude=true, omit scores or set them to null.
