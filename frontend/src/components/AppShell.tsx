@@ -8,7 +8,7 @@ export function AppShell() {
     <>
       <header className="top-nav">
         <NavLink to="/versions" className="top-nav__brand" onClick={() => setMenuOpen(false)}>
-          PBG Eval
+          PBG Eval <span style={{ fontSize: '0.75rem', color: 'var(--color-accent-teal)', fontWeight: 400 }}>v0.2.0</span>
         </NavLink>
         <button
           type="button"
@@ -21,12 +21,17 @@ export function AppShell() {
         <ul className={`top-nav__links${menuOpen ? ' open' : ''}`}>
           <li>
             <NavLink to="/versions" onClick={() => setMenuOpen(false)}>
-              Versions
+              Leaderboard & Batches
             </NavLink>
           </li>
           <li>
             <NavLink to="/compare" onClick={() => setMenuOpen(false)}>
-              Compare
+              Version Compare
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/auto-eval" onClick={() => setMenuOpen(false)}>
+              Auto-Eval & Healing
             </NavLink>
           </li>
         </ul>

@@ -45,7 +45,7 @@ export function VersionsPage() {
   }, [load])
 
   useEffect(() => {
-    if (batchStatus?.status === 'done') load()
+    if (batchStatus?.status === 'done' || batchStatus?.status === 'completed') load()
   }, [batchStatus?.status, load])
 
   const sorted = [...versions].sort((a, b) => {
@@ -120,7 +120,7 @@ export function VersionsPage() {
 
   return (
     <div className="section-gap">
-      <h1>Pipeline versions</h1>
+      <h1>Pipeline Evaluation Leaderboard</h1>
 
       <section className="feature-card">
         <h3>Start Evaluation Batch</h3>
@@ -233,7 +233,7 @@ export function VersionsPage() {
                   checked={autoGrade}
                   onChange={(e) => setAutoGrade(e.target.checked)}
                 />{' '}
-                Auto-grade with Gemini when complete
+                Auto-grade with Gemini LLM Judge when complete
               </label>
             </div>
             <div>
@@ -270,6 +270,7 @@ export function VersionsPage() {
                 <th className="sortable" onClick={() => toggleSort('run_count')}>
                   Runs
                 </th>
+                <th>Scored</th>
                 <th className="sortable" onClick={() => toggleSort('exclusion_rate')}>
                   Exclusion
                 </th>
@@ -280,23 +281,28 @@ export function VersionsPage() {
                 <th>Min</th>
                 <th>Median</th>
                 <th>Max</th>
+                <th>Heals</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {sorted.map((v) => (
                 <tr key={v.id}>
-                  <td>{v.label}</td>
+                  <td style={{ fontWeight: 600 }}>{v.label}</td>
                   <td className="mono">{v.created_at?.slice(0, 10)}</td>
                   <td>{v.run_count}</td>
+                  <td>{v.scored_count}</td>
                   <td className={v.exclusion_rate > 0.1 ? 'warning-text' : ''}>
                     {(v.exclusion_rate * 100).toFixed(1)}%
                   </td>
-                  <td>{v.score_stats.mean ?? '—'}</td>
+                  <td style={{ fontWeight: 600, color: (v.score_stats.mean ?? 0) >= 7 ? 'var(--color-success)' : 'inherit' }}>
+                    {v.score_stats.mean ?? '—'}
+                  </td>
                   <td>{v.score_stats.stdev ?? '—'}</td>
                   <td>{v.score_stats.min ?? '—'}</td>
                   <td>{v.score_stats.median ?? '—'}</td>
                   <td>{v.score_stats.max ?? '—'}</td>
+                  <td>{v.heal_count || 0}</td>
                   <td>
                     <Link to={`/versions/${encodeURIComponent(v.label)}/runs`}>Runs →</Link>
                   </td>

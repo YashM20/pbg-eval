@@ -7,6 +7,18 @@ CREATE TABLE IF NOT EXISTS pipeline_version (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS eval_job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_id INTEGER NOT NULL REFERENCES pipeline_version(id),
+    status TEXT NOT NULL DEFAULT 'running', -- running | completed | stopped | failed
+    total INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    stopped INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     version_id INTEGER NOT NULL REFERENCES pipeline_version(id),
@@ -21,11 +33,13 @@ CREATE TABLE IF NOT EXISTS run (
     master_text TEXT,
     vendor_text TEXT,
     extraction_ok INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
-    exclusion_reason TEXT
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | scored | excluded
+    exclusion_reason TEXT,
+    heal_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_version ON run(version_id);
+CREATE INDEX IF NOT EXISTS idx_run_job ON run(job_id);
 CREATE INDEX IF NOT EXISTS idx_run_doc ON run(version_id, doc_id);
 
 CREATE TABLE IF NOT EXISTS grade (
@@ -39,16 +53,20 @@ CREATE TABLE IF NOT EXISTS grade (
     scope_discipline REAL NOT NULL,
     overall_score REAL NOT NULL,
     independent_read TEXT NOT NULL,
-    grader_notes TEXT
+    grader_notes TEXT,
+    graded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS eval_job (
+CREATE TABLE IF NOT EXISTS fault_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    version_id INTEGER NOT NULL REFERENCES pipeline_version(id),
-    status TEXT NOT NULL DEFAULT 'running',
-    total INTEGER NOT NULL DEFAULT 0,
-    completed INTEGER NOT NULL DEFAULT 0,
-    error TEXT,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    stopped INTEGER NOT NULL DEFAULT 0
+    run_id INTEGER REFERENCES run(id),
+    job_id INTEGER REFERENCES eval_job(id),
+    fault_type TEXT NOT NULL,
+    error_message TEXT,
+    detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+    remedy_applied TEXT,
+    success INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS idx_fault_job ON fault_log(job_id);
+CREATE INDEX IF NOT EXISTS idx_fault_run ON fault_log(run_id);

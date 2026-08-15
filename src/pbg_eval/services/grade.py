@@ -1,6 +1,11 @@
+"""Two-call LLM judge grading service with derivation caching and score weighting."""
+
+from __future__ import annotations
+
 import json
 import logging
 import sqlite3
+from typing import Any
 
 from pbg_eval.clients.gemini import GeminiClient
 from pbg_eval.config import Config, get_config
@@ -10,7 +15,7 @@ from pbg_eval.models import compute_overall
 logger = logging.getLogger(__name__)
 
 
-def grade_version(version_label: str, config: Config | None = None) -> dict:
+def grade_version(version_label: str, config: Config | None = None) -> dict[str, Any]:
     config = config or get_config()
     conn = connect(config.db_path)
     version = conn.execute("SELECT id FROM pipeline_version WHERE label = ?", (version_label,)).fetchone()
@@ -25,12 +30,15 @@ def grade_version(version_label: str, config: Config | None = None) -> dict:
         (version_id,),
     ).fetchall()
 
-    logger.info("[GradeService] Starting grading for version '%s' (%d runs pending for scoring)...", version_label, len(pending))
+    logger.info("[GradeService] Starting grading for version '%s' (%d runs pending)...", version_label, len(pending))
 
     gemini = GeminiClient(config)
     graded = 0
     excluded = 0
     errors: list[str] = []
+
+    # Cache derivations across multiple repeats of the exact same document
+    derivation_cache: dict[str, str] = {}
 
     for idx, row in enumerate(pending, 1):
         run_id = row["id"]
@@ -51,13 +59,19 @@ def grade_version(version_label: str, config: Config | None = None) -> dict:
             continue
 
         try:
-            derivation = gemini.derive(master, vendor)
-            independent_read = json.dumps(derivation, ensure_ascii=False)
+            cache_key = f"{doc_id}:{hash(master)}:{hash(vendor)}"
+            if cache_key in derivation_cache:
+                independent_read = derivation_cache[cache_key]
+            else:
+                derivation = gemini.derive(master, vendor)
+                independent_read = json.dumps(derivation, ensure_ascii=False)
+                derivation_cache[cache_key] = independent_read
+
             result = gemini.score(master, vendor, independent_read, raw)
 
             if result.get("exclude"):
                 reason = result.get("exclusion_reason") or "semantic_exclusion"
-                logger.warning("[GradeService] Run id=%d (doc_id=%s) excluded by Gemini judge: %s", run_id, doc_id, reason)
+                logger.warning("[GradeService] Run id=%d excluded by Gemini judge: %s", run_id, reason)
                 conn.execute(
                     "UPDATE run SET status = 'excluded', exclusion_reason = ? WHERE id = ?",
                     (reason, run_id),
@@ -73,6 +87,12 @@ def grade_version(version_label: str, config: Config | None = None) -> dict:
                 scope,
                 config.scope_penalty,
             )
+            def _to_float(v: Any, default: float = 0.0) -> float:
+                try:
+                    return float(v) if v is not None else default
+                except (ValueError, TypeError):
+                    return default
+
             conn.execute(
                 """
                 INSERT INTO grade (
@@ -83,12 +103,12 @@ def grade_version(version_label: str, config: Config | None = None) -> dict:
                 """,
                 (
                     run_id,
-                    scores.get("deviation_recall"),
-                    scores.get("deviation_precision"),
-                    scores.get("severity_correctness"),
-                    scores.get("reasoning_quality"),
-                    scores.get("schema_integrity"),
-                    scores.get("scope_discipline"),
+                    _to_float(scores.get("deviation_recall")),
+                    _to_float(scores.get("deviation_precision")),
+                    _to_float(scores.get("severity_correctness")),
+                    _to_float(scores.get("reasoning_quality")),
+                    _to_float(scores.get("schema_integrity")),
+                    _to_float(scores.get("scope_discipline"), 10.0),
                     overall,
                     independent_read,
                     result.get("grader_notes"),
@@ -96,14 +116,13 @@ def grade_version(version_label: str, config: Config | None = None) -> dict:
             )
             conn.execute("UPDATE run SET status = 'scored' WHERE id = ?", (run_id,))
             graded += 1
-            logger.info("[GradeService] Run id=%d scored successfully. Overall score: %.2f", run_id, overall)
+            logger.info("[GradeService] Run id=%d scored successfully: %.2f", run_id, overall)
         except Exception as exc:
             err_msg = f"run {run_id}: {exc}"
-            logger.error("[GradeService] Error grading run id=%d (doc_id=%s): %s", run_id, doc_id, exc)
+            logger.error("[GradeService] Error grading run id=%d: %s", run_id, exc)
             errors.append(err_msg)
 
     conn.commit()
     conn.close()
-    logger.info("[GradeService] Completed grading for version '%s': %d scored, %d excluded, %d errors", version_label, graded, excluded, len(errors))
+    logger.info("[GradeService] Grading complete for '%s': %d scored, %d excluded, %d errors", version_label, graded, excluded, len(errors))
     return {"version": version_label, "graded": graded, "excluded": excluded, "errors": errors}
-

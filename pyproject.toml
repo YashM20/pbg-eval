@@ -1,7 +1,7 @@
 [project]
 name = "pbg-eval"
 version = "0.1.0"
-description = "PBG comparison eval harness — FastAPI + SQLite"
+description = "PBG comparison eval harness — FastAPI + Vite/React UI + Autonomous Self-Healing"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,14 @@ dependencies = [
     "httpx==0.28.1",
     "google-genai==1.31.0",
     "pydantic==2.11.7",
+    "pydantic-settings>=2.7.0",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [build-system]

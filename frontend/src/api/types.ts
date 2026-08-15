@@ -17,6 +17,7 @@ export interface PipelineVersion {
   run_count: number
   scored_count: number
   exclusion_rate: number
+  heal_count?: number
   score_stats: ScoreStats
 }
 
@@ -26,6 +27,8 @@ export interface BatchRequest {
   repeats: number
   allow_prod: boolean
   auto_grade?: boolean
+  prompt_hash?: string
+  model_config_json?: string
 }
 
 export interface BatchStartResponse {
@@ -50,6 +53,7 @@ export interface BatchStatus {
   completed: number
   error: string | null
   started_at: string
+  finished_at?: string | null
   docs?: BatchDocStatus[] | null
 }
 
@@ -77,6 +81,8 @@ export interface RunRecord {
   exclusion_reason: string | null
   grader_notes: string | null
   independent_read: string | null
+  thinking_trace?: string | null
+  heal_count?: number
 }
 
 export interface VersionRunsResponse {
@@ -89,4 +95,42 @@ export interface CompareResponse {
   v1: PipelineVersion
   v2: PipelineVersion
   ranking: { label: string; mean: number | null; exclusion_rate: number }[]
+}
+
+export interface FaultEventDetail {
+  id: number
+  run_id: number | null
+  job_id: number | null
+  doc_id: string | null
+  fault_type: string
+  error_message: string | null
+  detected_at: string
+  remedy_applied: string | null
+  success: number
+}
+
+export interface FaultSummaryItem {
+  fault_type: string
+  count: number
+  healed: number | null
+}
+
+export interface FaultSummaryResponse {
+  summary: FaultSummaryItem[]
+  recent_events: FaultEventDetail[]
+}
+
+export interface DaemonStatusResponse {
+  is_running: boolean
+  interval_seconds: number
+  last_sweep_at: string | null
+  total_sweeps: number
+  active_job_id: number | null
+  last_error: string | null
+}
+
+export interface DaemonStartRequest {
+  interval_seconds: number
+  docs_dir?: string
+  repeats?: number
 }

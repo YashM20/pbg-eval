@@ -1,8 +1,12 @@
+"""Batch execution service with fault healing and isolated trace capture."""
+
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
-import time
 import sqlite3
+import time
 from pathlib import Path
 
 from pbg_eval.clients.backend import BackendClient, BackendError
@@ -10,41 +14,48 @@ from pbg_eval.config import Config, get_config
 from pbg_eval.db import connect
 from pbg_eval.exclude import check_output
 from pbg_eval.extraction import check_extraction
+from pbg_eval.healing.healer import FaultHealer
 from pbg_eval.models import DocFixture
 
 logger = logging.getLogger(__name__)
 
 
 def load_fixtures(docs_dir: Path) -> list[DocFixture]:
-    """Load fixtures from a directory."""
+    """Load fixtures from a directory (JSON fixtures and raw PDFs)."""
     fixtures: list[DocFixture] = []
     json_count = 0
     pdf_count = 0
 
-    # JSON fixtures — may have backend_doc_id and/or pdf_path
+    if not docs_dir.exists():
+        return fixtures
+
+    # JSON fixtures
     for path in sorted(docs_dir.glob("*.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
-        pdf_path: Path | None = None
-        if data.get("pdf_path"):
-            raw = Path(data["pdf_path"])
-            pdf_path = raw if raw.is_absolute() else docs_dir / raw
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            pdf_path: Path | None = None
+            if data.get("pdf_path"):
+                raw = Path(data["pdf_path"])
+                pdf_path = raw if raw.is_absolute() else docs_dir / raw
 
-        fixtures.append(
-            DocFixture(
-                doc_id=data["doc_id"],
-                backend_doc_id=data.get("backend_doc_id"),
-                pdf_path=pdf_path,
-                master_text=data.get("master_text"),
-                vendor_text=data.get("vendor_text"),
+            fixtures.append(
+                DocFixture(
+                    doc_id=data.get("doc_id", path.stem),
+                    backend_doc_id=data.get("backend_doc_id"),
+                    pdf_path=pdf_path,
+                    master_text=data.get("master_text"),
+                    vendor_text=data.get("vendor_text"),
+                )
             )
-        )
-        json_count += 1
+            json_count += 1
+        except Exception as exc:
+            logger.warning("Could not parse fixture %s: %s", path, exc)
 
-    # Raw PDF files — no JSON companion, full upload mode
-    json_stems = {f.stem for f in docs_dir.glob("*.json")}
+    # Raw PDF files
+    json_stems = {f.doc_id for f in fixtures}
     for path in sorted(docs_dir.glob("*.pdf")):
         if path.stem in json_stems:
-            continue  # already referenced by a JSON fixture
+            continue
         fixtures.append(
             DocFixture(
                 doc_id=path.stem,
@@ -84,18 +95,24 @@ def create_eval_job(conn: sqlite3.Connection, version_id: int, total: int) -> in
     return cur.lastrowid  # type: ignore[return-value]
 
 
-def update_job_progress(conn: sqlite3.Connection, job_id: int, completed: int, status: str = "running", error: str | None = None) -> None:
+def update_job_progress(
+    conn: sqlite3.Connection,
+    job_id: int,
+    completed: int,
+    status: str = "running",
+    error: str | None = None,
+) -> None:
+    finished_clause = ", finished_at = datetime('now')" if status in ("completed", "done", "failed", "stopped") else ""
     conn.execute(
-        "UPDATE eval_job SET completed = ?, status = ?, error = ? WHERE id = ?",
+        f"UPDATE eval_job SET completed = ?, status = ?, error = ? {finished_clause} WHERE id = ?",
         (completed, status, error, job_id),
     )
     conn.commit()
 
 
 def stop_run(conn: sqlite3.Connection, job_id: int) -> None:
-    """Mark an eval job as stopped so execute_run_batch exits gracefully."""
     conn.execute(
-        "UPDATE eval_job SET stopped = 1, status = 'stopped' WHERE id = ? AND status = 'running'",
+        "UPDATE eval_job SET stopped = 1, status = 'stopped', finished_at = datetime('now') WHERE id = ? AND status = 'running'",
         (job_id,),
     )
     conn.commit()
@@ -107,7 +124,6 @@ def get_eval_job(conn: sqlite3.Connection, job_id: int) -> dict | None:
 
 
 def get_job_doc_status(conn: sqlite3.Connection, job_id: int) -> list[dict]:
-    """Per-document progress for an eval job, derived from its run rows."""
     rows = conn.execute(
         """
         SELECT
@@ -153,13 +169,15 @@ def _store_run(
     extraction_ok: bool,
     eval_job_id: int | None = None,
     thinking_trace: str | None = None,
-) -> None:
-    conn.execute(
+    heal_count: int = 0,
+) -> int:
+    cur = conn.execute(
         """
         INSERT INTO run (
             version_id, job_id, doc_id, backend_doc_id, backend_job_id, latency_seconds,
-            raw_qwen_output, thinking_trace, master_text, vendor_text, extraction_ok, status, exclusion_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            raw_qwen_output, thinking_trace, master_text, vendor_text, extraction_ok,
+            status, exclusion_reason, heal_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             version_id,
@@ -175,20 +193,21 @@ def _store_run(
             int(extraction_ok),
             status,
             exclusion_reason,
+            heal_count,
         ),
     )
     conn.commit()
+    return cur.lastrowid  # type: ignore[return-value]
 
 
 def _extract_vendor_text_from_result(result: dict) -> str:
-    """Derive a proxy vendor text from comparison result deviations."""
     deviations = result.get("deviations") or []
     parts: list[str] = []
     for dev in deviations:
         if isinstance(dev, dict):
             clause = dev.get("clauseNo", "")
             appearing = dev.get("appearingInBg", "")
-            if appearing:
+            if appearing and appearing != "Missing":
                 parts.append(f"[Clause {clause}] {appearing}" if clause else appearing)
     return "\n\n".join(parts) if parts else ""
 
@@ -211,15 +230,16 @@ def execute_run_batch(
     conn.commit()
 
     client = BackendClient(config, allow_prod=allow_prod)
+    healer = FaultHealer(client, conn)
+
     try:
         client.login()
-    except BackendError as exc:
-        update_job_progress(conn, job_id, 0, "failed", exc.reason)
+    except Exception as exc:
+        healer.handle_backend_failure(exc, doc_id="auth", job_id=job_id)
+        update_job_progress(conn, job_id, 0, "failed", str(exc))
         conn.close()
         return
 
-    # Fetch master text once from backend (active master format)
-    # This is used when fixtures don't have their own master_text snapshot
     _cached_master_text: str | None = None
 
     def _get_master_text(fixture: DocFixture) -> str | None:
@@ -229,43 +249,40 @@ def execute_run_batch(
         if _cached_master_text is None:
             try:
                 _cached_master_text = client.get_active_master_text() or ""
-                if not _cached_master_text:
-                    logger.warning("No active master format text found on backend")
-            except BackendError as exc:
+            except Exception as exc:
                 logger.warning("Could not fetch active master text: %s", exc)
                 _cached_master_text = ""
         return _cached_master_text or None
 
     completed = 0
     was_stopped = False
+
     try:
         for fixture in fixtures:
             needs_upload = fixture.backend_doc_id is None and fixture.pdf_path is not None
             has_no_source = fixture.backend_doc_id is None and fixture.pdf_path is None
 
-            # --- No source: exclude all repeats immediately ---
             if has_no_source:
-                logger.error("Fixture %s has neither backend_doc_id nor pdf_path — skipping", fixture.doc_id)
+                logger.error("Fixture %s has no source (no PDF or doc_id) — excluding", fixture.doc_id)
                 for _ in range(repeats):
                     _store_run(conn, version_id, fixture, None, None, None, "excluded", "no_source", False, job_id)
                     completed += 1
                     update_job_progress(conn, job_id, completed)
                 continue
 
-            # --- Check if job was stopped ---
             stopped_row = conn.execute("SELECT stopped FROM eval_job WHERE id = ?", (job_id,)).fetchone()
             if stopped_row and stopped_row["stopped"]:
-                logger.info("[RunService] Job %d stopped — skipping remaining fixtures", job_id)
+                logger.info("[RunService] Batch %d was stopped", job_id)
                 update_job_progress(conn, job_id, completed, "stopped")
                 was_stopped = True
                 break
 
-            # --- Heal check: if backend_doc_id exists and comparison already completed, fetch it ---
+            # Check if comparison already completed on backend
             if fixture.backend_doc_id:
                 try:
                     healed = client.get_comparison_if_complete(fixture.backend_doc_id)
                     if healed is not None:
-                        logger.info("[RunService] Healed fixture %s — comparison already completed on backend", fixture.doc_id)
+                        logger.info("[RunService] Retrieved completed comparison for %s", fixture.doc_id)
                         raw = BackendClient.serialize_comparison(healed)
                         latency = healed.get("_latency")
                         meta = healed.get("vendorMetadata") or {}
@@ -273,7 +290,7 @@ def execute_run_batch(
                         master = _get_master_text(fixture)
                         vendor = fixture.vendor_text or _extract_vendor_text_from_result(healed)
                         fixture.master_text = master
-                        fixture.vendor_text = vendor if vendor else None
+                        fixture.vendor_text = vendor or None
                         reason = check_output(raw, fixture.master_text, fixture.vendor_text)
                         status = "excluded" if reason else "pending"
                         _store_run(
@@ -283,209 +300,196 @@ def execute_run_batch(
                         completed += 1
                         update_job_progress(conn, job_id, completed)
                         continue
-                except BackendError as exc:
-                    logger.warning("[RunService] Heal check failed for fixture %s: %s", fixture.doc_id, exc)
+                except Exception as exc:
+                    healer.handle_backend_failure(exc, fixture.doc_id, job_id=job_id)
 
-            # --- PDF Upload mode: upload → full pipeline → get initial result ---
+            # Fresh PDF Upload flow
             if needs_upload:
-                logger.info("Uploading PDF for fixture %s: %s", fixture.doc_id, fixture.pdf_path)
+                comparison_job_id = None
+                first_result = None
+                heal_count = 0
+
                 try:
                     doc_id, comparison_job_id, first_result = client.upload_and_process_pdf(fixture.pdf_path)
-                except BackendError as exc:
-                    fixture.backend_doc_id = exc.doc_id
-                    # If transient error and backend_doc_id known, check for completed comparison
-                    if exc.transient and exc.doc_id:
+                    fixture.backend_doc_id = doc_id
+                except Exception as exc:
+                    remedy = healer.handle_backend_failure(exc, fixture.doc_id, job_id=job_id)
+                    if remedy.healed:
+                        heal_count += 1
                         try:
-                            healed = client.get_comparison_if_complete(exc.doc_id)
-                            if healed is not None:
-                                logger.info("[RunService] Healed fixture %s after transient upload error", fixture.doc_id)
-                                raw = BackendClient.serialize_comparison(healed)
-                                latency = healed.get("_latency")
-                                meta = healed.get("vendorMetadata") or {}
-                                extraction_ok, _ = check_extraction(meta)
-                                master = _get_master_text(fixture)
-                                vendor = fixture.vendor_text or _extract_vendor_text_from_result(healed)
-                                fixture.master_text = master
-                                fixture.vendor_text = vendor if vendor else None
-                                reason = check_output(raw, fixture.master_text, fixture.vendor_text)
-                                status = "excluded" if reason else "pending"
+                            doc_id, comparison_job_id, first_result = client.upload_and_process_pdf(fixture.pdf_path)
+                            fixture.backend_doc_id = doc_id
+                        except Exception as retry_exc:
+                            logger.error("Upload retry failed for %s: %s", fixture.doc_id, retry_exc)
+                            for _ in range(repeats):
                                 _store_run(
-                                    conn, version_id, fixture, raw, None, latency,
-                                    status, reason, extraction_ok, job_id, healed.get("_trace"),
+                                    conn, version_id, fixture, None, None, None,
+                                    "excluded", f"upload_failed: {retry_exc}", False, job_id,
+                                    heal_count=heal_count,
                                 )
                                 completed += 1
                                 update_job_progress(conn, job_id, completed)
-                                continue
-                        except BackendError:
-                            pass
-                    if exc.transient:
-                        logger.error("Transient network failure uploading %s after retries: %s", fixture.doc_id, exc.detail)
+                            continue
                     else:
-                        logger.error("Failed to upload/process %s: %s", fixture.doc_id, exc.detail)
-                    for _ in range(repeats):
-                        _store_run(
-                            conn, version_id, fixture, None, None, None, "excluded",
-                            f"{exc.reason}: {exc.detail}" if exc.detail else exc.reason, False, job_id,
-                        )
-                        completed += 1
-                        update_job_progress(conn, job_id, completed)
-                    continue
+                        for _ in range(repeats):
+                            _store_run(
+                                conn, version_id, fixture, None, None, None,
+                                "excluded", f"upload_failed: {exc}", False, job_id,
+                            )
+                            completed += 1
+                            update_job_progress(conn, job_id, completed)
+                        continue
 
-                # Populate backend_doc_id now that we have it
-                fixture.backend_doc_id = doc_id
-
-                # Store Run 1 using the first result we already fetched
+                # Run 1 Store
                 run1_raw = BackendClient.serialize_comparison(first_result)
                 run1_latency = first_result.get("_latency")
                 run1_meta = first_result.get("vendorMetadata") or {}
                 run1_extraction_ok, _ = check_extraction(run1_meta)
-
-                # Resolve master & vendor text for grading
                 master = _get_master_text(fixture)
                 vendor = fixture.vendor_text or _extract_vendor_text_from_result(first_result)
                 fixture.master_text = master
-                fixture.vendor_text = vendor if vendor else None
+                fixture.vendor_text = vendor or None
 
                 run1_reason = check_output(run1_raw, fixture.master_text, fixture.vendor_text)
                 run1_status = "excluded" if run1_reason else "pending"
                 _store_run(
                     conn, version_id, fixture, run1_raw, comparison_job_id, run1_latency,
                     run1_status, run1_reason, run1_extraction_ok, job_id,
-                    first_result.get("_trace"),
+                    first_result.get("_trace"), heal_count=heal_count,
                 )
                 completed += 1
                 update_job_progress(conn, job_id, completed)
 
-                # Repeats 2..N via retry
+                # Repeats 2..N
                 for _ in range(repeats - 1):
+                    repeat_heal = 0
                     try:
                         result = client.run_repeat(fixture.backend_doc_id, comparison_job_id)
-                        raw = BackendClient.serialize_comparison(result)
-                        latency = result.get("_latency")
-                        meta = result.get("vendorMetadata") or {}
-                        extraction_ok, _ = check_extraction(meta)
-                        reason = check_output(raw, fixture.master_text, fixture.vendor_text)
-                        status = "excluded" if reason else "pending"
-                        _store_run(
-                            conn, version_id, fixture, raw, comparison_job_id, latency,
-                            status, reason, extraction_ok, job_id, result.get("_trace"),
-                        )
-                    except BackendError as exc:
-                        if exc.transient:
-                            logger.warning("[RunService] Transient error on repeat for %s, retrying once", fixture.doc_id)
-                            time.sleep(5)
+                    except Exception as exc:
+                        remedy = healer.handle_backend_failure(exc, fixture.doc_id, comparison_job_id, job_id=job_id)
+                        if remedy.healed:
+                            repeat_heal += 1
                             try:
                                 result = client.run_repeat(fixture.backend_doc_id, comparison_job_id)
-                                raw = BackendClient.serialize_comparison(result)
-                                latency = result.get("_latency")
-                                meta = result.get("vendorMetadata") or {}
-                                extraction_ok, _ = check_extraction(meta)
-                                reason = check_output(raw, fixture.master_text, fixture.vendor_text)
-                                status = "excluded" if reason else "pending"
-                                _store_run(
-                                    conn, version_id, fixture, raw, comparison_job_id, latency,
-                                    status, reason, extraction_ok, job_id, result.get("_trace"),
-                                )
-                            except BackendError as exc2:
+                            except Exception as retry_exc:
                                 _store_run(
                                     conn, version_id, fixture, None, comparison_job_id, None,
-                                    "excluded", f"{exc2.reason}: {exc2.detail}" if exc2.detail else exc2.reason, False, job_id,
+                                    "excluded", f"repeat_failed: {retry_exc}", False, job_id,
+                                    heal_count=repeat_heal,
                                 )
+                                completed += 1
+                                update_job_progress(conn, job_id, completed)
+                                continue
                         else:
                             _store_run(
                                 conn, version_id, fixture, None, comparison_job_id, None,
-                                "excluded", f"{exc.reason}: {exc.detail}" if exc.detail else exc.reason, False, job_id,
+                                "excluded", f"repeat_failed: {exc}", False, job_id,
                             )
+                            completed += 1
+                            update_job_progress(conn, job_id, completed)
+                            continue
+
+                    raw = BackendClient.serialize_comparison(result)
+                    latency = result.get("_latency")
+                    meta = result.get("vendorMetadata") or {}
+                    extraction_ok, _ = check_extraction(meta)
+                    reason = check_output(raw, fixture.master_text, fixture.vendor_text)
+                    status = "excluded" if reason else "pending"
+                    _store_run(
+                        conn, version_id, fixture, raw, comparison_job_id, latency,
+                        status, reason, extraction_ok, job_id, result.get("_trace"),
+                        heal_count=repeat_heal,
+                    )
                     completed += 1
                     update_job_progress(conn, job_id, completed)
 
                 continue
 
-            # --- Legacy mode: pre-existing backend_doc_id ---
-            # Ensure master/vendor text is populated from backend if not in fixture
+            # Pre-existing backend_doc_id mode
             fixture.master_text = _get_master_text(fixture)
-
             try:
                 comparison_job_id = client.get_comparison_job_id(fixture.backend_doc_id)
-            except BackendError as exc:
+            except Exception as exc:
                 for _ in range(repeats):
                     _store_run(
-                        conn, version_id, fixture, None, None, None, "excluded",
-                        f"{exc.reason}: {exc.detail}" if exc.detail else exc.reason, False, job_id,
+                        conn, version_id, fixture, None, None, None,
+                        "excluded", f"job_id_lookup_failed: {exc}", False, job_id,
                     )
                     completed += 1
                     update_job_progress(conn, job_id, completed)
                 continue
 
             for _ in range(repeats):
+                repeat_heal = 0
                 try:
                     result = client.run_repeat(fixture.backend_doc_id, comparison_job_id)
-                    raw = BackendClient.serialize_comparison(result)
-                    latency = result.get("_latency")
-                    meta = result.get("vendorMetadata") or {}
-                    extraction_ok, _ = check_extraction(meta)
-
-                    # Vendor text: use fixture snapshot if available, else derive from result
-                    if not fixture.vendor_text:
-                        fixture.vendor_text = _extract_vendor_text_from_result(result) or None
-
-                    reason = check_output(raw, fixture.master_text, fixture.vendor_text)
-                    status = "excluded" if reason else "pending"
-                    _store_run(
-                        conn, version_id, fixture, raw, comparison_job_id, latency,
-                        status, reason, extraction_ok, job_id, result.get("_trace"),
-                    )
-                except BackendError as exc:
-                    if exc.transient:
-                        logger.warning("[RunService] Transient error on repeat for %s, retrying once", fixture.doc_id)
-                        time.sleep(5)
+                except Exception as exc:
+                    remedy = healer.handle_backend_failure(exc, fixture.doc_id, comparison_job_id, job_id=job_id)
+                    if remedy.healed:
+                        repeat_heal += 1
                         try:
                             result = client.run_repeat(fixture.backend_doc_id, comparison_job_id)
-                            raw = BackendClient.serialize_comparison(result)
-                            latency = result.get("_latency")
-                            meta = result.get("vendorMetadata") or {}
-                            extraction_ok, _ = check_extraction(meta)
-                            if not fixture.vendor_text:
-                                fixture.vendor_text = _extract_vendor_text_from_result(result) or None
-                            reason = check_output(raw, fixture.master_text, fixture.vendor_text)
-                            status = "excluded" if reason else "pending"
-                            _store_run(
-                                conn, version_id, fixture, raw, comparison_job_id, latency,
-                                status, reason, extraction_ok, job_id, result.get("_trace"),
-                            )
-                        except BackendError as exc2:
+                        except Exception as retry_exc:
                             _store_run(
                                 conn, version_id, fixture, None, comparison_job_id, None,
-                                "excluded", f"{exc2.reason}: {exc2.detail}" if exc2.detail else exc2.reason, False, job_id,
+                                "excluded", f"repeat_failed: {retry_exc}", False, job_id,
+                                heal_count=repeat_heal,
                             )
+                            completed += 1
+                            update_job_progress(conn, job_id, completed)
+                            continue
                     else:
                         _store_run(
                             conn, version_id, fixture, None, comparison_job_id, None,
-                            "excluded", f"{exc.reason}: {exc.detail}" if exc.detail else exc.reason, False, job_id,
+                            "excluded", f"repeat_failed: {exc}", False, job_id,
                         )
+                        completed += 1
+                        update_job_progress(conn, job_id, completed)
+                        continue
+
+                raw = BackendClient.serialize_comparison(result)
+                latency = result.get("_latency")
+                meta = result.get("vendorMetadata") or {}
+                extraction_ok, _ = check_extraction(meta)
+                if not fixture.vendor_text:
+                    fixture.vendor_text = _extract_vendor_text_from_result(result) or None
+
+                reason = check_output(raw, fixture.master_text, fixture.vendor_text)
+                status = "excluded" if reason else "pending"
+                _store_run(
+                    conn, version_id, fixture, raw, comparison_job_id, latency,
+                    status, reason, extraction_ok, job_id, result.get("_trace"),
+                    heal_count=repeat_heal,
+                )
                 completed += 1
                 update_job_progress(conn, job_id, completed)
 
         if not was_stopped:
-            update_job_progress(conn, job_id, completed, "done")
-        conn.close()
-
-        # Auto-grade after all runs complete
-        if auto_grade and not was_stopped:
-            logger.info("Auto-grading version '%s'...", version_label)
-            try:
-                from pbg_eval.services.grade import grade_version
-                result = grade_version(version_label, config)
-                logger.info(
-                    "Auto-grade complete: graded=%d excluded=%d errors=%d",
-                    result["graded"], result["excluded"], len(result["errors"]),
-                )
-            except Exception as exc:
-                logger.error("Auto-grade failed: %s", exc)
-
+            update_job_progress(conn, job_id, completed, "completed")
     except Exception as exc:
-        update_job_progress(conn, job_id, completed, "failed", str(exc))
-        conn.close()
+        logger.error("[RunService] Fatal error during batch execution: %s", exc)
+        try:
+            update_job_progress(conn, job_id, completed, "failed", str(exc))
+        except Exception:
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Auto-grade if enabled (runs in separate connection after batch finishes)
+    if auto_grade and not was_stopped:
+        logger.info("Auto-grading version '%s'...", version_label)
+        try:
+            from pbg_eval.services.grade import grade_version
+            grade_res = grade_version(version_label, config)
+            logger.info(
+                "Auto-grade complete: graded=%d, excluded=%d, errors=%d",
+                grade_res["graded"], grade_res["excluded"], len(grade_res["errors"])
+            )
+        except Exception as exc:
+            logger.error("Auto-grade failed: %s", exc)
 
 
 def start_run(
@@ -497,7 +501,6 @@ def start_run(
     model_config: str = "{}",
     config: Config | None = None,
 ) -> tuple[int, int]:
-    """Create eval_job and return (job_id, version_id). Caller runs execute_run_batch."""
     config = config or get_config()
     conn = connect(config.db_path)
     fixtures = load_fixtures(docs_dir)

@@ -1,14 +1,12 @@
-"""Plain dataclasses and score helpers."""
+"""Plain dataclasses and score helpers for pbg-eval."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pbg_eval.config import ScoreWeights, ScopePenalty
-
-
-from pathlib import Path
 
 
 @dataclass
@@ -31,20 +29,64 @@ class PipelineVersion:
 
 
 @dataclass
+class EvalJob:
+    id: int
+    version_id: int
+    status: str
+    total: int
+    completed: int
+    error: str | None
+    started_at: str
+    finished_at: str | None = None
+    stopped: int = 0
+
+
+@dataclass
 class Run:
     id: int
     version_id: int
     doc_id: str
-    backend_doc_id: str
+    backend_doc_id: str | None
     backend_job_id: str | None
     timestamp: str
     latency_seconds: float | None
     raw_qwen_output: str | None
+    thinking_trace: str | None
     master_text: str | None
     vendor_text: str | None
     extraction_ok: bool
     status: str
     exclusion_reason: str | None = None
+    heal_count: int = 0
+    job_id: int | None = None
+
+
+@dataclass
+class Grade:
+    id: int
+    run_id: int
+    deviation_recall: float
+    deviation_precision: float
+    severity_correctness: float
+    reasoning_quality: float
+    schema_integrity: float
+    scope_discipline: float
+    overall_score: float
+    independent_read: str
+    grader_notes: str | None
+    graded_at: str | None = None
+
+
+@dataclass
+class FaultLog:
+    id: int
+    run_id: int | None
+    job_id: int | None
+    fault_type: str
+    error_message: str | None
+    detected_at: str
+    remedy_applied: str | None
+    success: int = 0
 
 
 def compute_overall(

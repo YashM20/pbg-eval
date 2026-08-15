@@ -1,11 +1,16 @@
+"""Statistical reporting, ranking, variance analysis, and telemetry queries."""
+
+from __future__ import annotations
+
 import math
 from collections import defaultdict
+from typing import Any
 
-from pbg_eval.db import connect
 from pbg_eval.config import get_config
+from pbg_eval.db import connect
 
 
-def _stats(scores: list[float]) -> dict:
+def _stats(scores: list[float]) -> dict[str, Any]:
     if not scores:
         return {"count": 0, "mean": None, "min": None, "max": None, "median": None, "stdev": None}
     scores_sorted = sorted(scores)
@@ -24,16 +29,17 @@ def _stats(scores: list[float]) -> dict:
     }
 
 
-def list_versions() -> list[dict]:
+def list_versions() -> list[dict[str, Any]]:
     conn = connect(get_config().db_path)
     versions = conn.execute("SELECT * FROM pipeline_version ORDER BY created_at DESC").fetchall()
     result = []
     for v in versions:
         vid = v["id"]
-        runs = conn.execute("SELECT status FROM run WHERE version_id = ?", (vid,)).fetchall()
+        runs = conn.execute("SELECT status, heal_count FROM run WHERE version_id = ?", (vid,)).fetchall()
         total = len(runs)
         excluded = sum(1 for r in runs if r["status"] == "excluded")
         scored_count = sum(1 for r in runs if r["status"] == "scored")
+        total_heals = sum(r["heal_count"] or 0 for r in runs)
         scored = conn.execute(
             """
             SELECT g.overall_score FROM grade g
@@ -52,6 +58,7 @@ def list_versions() -> list[dict]:
             "notes": v["notes"],
             "run_count": total,
             "scored_count": scored_count,
+            "heal_count": total_heals,
             "exclusion_rate": round(excluded / total, 3) if total else 0,
             "score_stats": _stats(scores),
         })
@@ -59,7 +66,7 @@ def list_versions() -> list[dict]:
     return result
 
 
-def version_runs(label: str) -> dict:
+def version_runs(label: str) -> dict[str, Any]:
     conn = connect(get_config().db_path)
     version = conn.execute("SELECT * FROM pipeline_version WHERE label = ?", (label,)).fetchone()
     if not version:
@@ -98,7 +105,7 @@ def version_runs(label: str) -> dict:
     }
 
 
-def compare_versions(v1: str, v2: str) -> dict:
+def compare_versions(v1: str, v2: str) -> dict[str, Any]:
     versions = {v["label"]: v for v in list_versions()}
     if v1 not in versions:
         raise ValueError(f"Version not found: {v1}")
@@ -111,4 +118,33 @@ def compare_versions(v1: str, v2: str) -> dict:
         "v1": a,
         "v2": b,
         "ranking": [{"label": v["label"], "mean": v["score_stats"]["mean"], "exclusion_rate": v["exclusion_rate"]} for v in ranked],
+    }
+
+
+def get_fault_summary() -> dict[str, Any]:
+    """Summary of all recorded fault detections and remedy actions."""
+    conn = connect(get_config().db_path)
+    rows = conn.execute(
+        """
+        SELECT fault_type, COUNT(*) as count, SUM(success) as healed
+        FROM fault_log
+        GROUP BY fault_type
+        ORDER BY count DESC
+        """
+    ).fetchall()
+
+    recent = conn.execute(
+        """
+        SELECT f.*, r.doc_id
+        FROM fault_log f
+        LEFT JOIN run r ON r.id = f.run_id
+        ORDER BY f.detected_at DESC
+        LIMIT 50
+        """
+    ).fetchall()
+
+    conn.close()
+    return {
+        "summary": [dict(r) for r in rows],
+        "recent_events": [dict(r) for r in recent],
     }

@@ -1,20 +1,24 @@
+"""Target model output exclusion classifier (Strict / Zero-Repair)."""
+
+from __future__ import annotations
+
 import json
 import re
 from typing import Any
 
 
 def check_output(raw: str, master_text: str | None, vendor_text: str | None) -> str | None:
-    """Return exclusion reason or None if output looks like a real attempt."""
+    """Return exclusion reason or None if output looks like a valid comparison attempt."""
     if not raw or not raw.strip():
         return "empty"
 
     text = raw.strip()
 
-    if _is_truncated(text):
-        return "truncated"
-
     if _is_looping(text):
         return "loop"
+
+    if _is_truncated(text):
+        return "truncated"
 
     try:
         parsed = _parse_json(text)
@@ -37,18 +41,19 @@ def _parse_json(text: str) -> Any:
 
 
 def _is_truncated(text: str) -> bool:
-    if not text.endswith(("}", "]", '"')):
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
+    if fence:
+        cleaned = fence.group(1).strip()
+
+    if not cleaned.endswith(("}", "]")):
         return True
-    try:
-        _parse_json(text)
-        return False
-    except (json.JSONDecodeError, ValueError):
-        return True
+    return False
 
 
 def _is_looping(text: str) -> bool:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if len(lines) < 6:
+    if len(lines) < 4:
         return False
     seen: dict[str, int] = {}
     for ln in lines:
@@ -63,6 +68,8 @@ def _is_verbatim_echo(parsed: Any, master_text: str | None, vendor_text: str | N
         return False
     raw_str = json.dumps(parsed)
     for src in (master_text, vendor_text):
-        if src and len(src) > 200 and src[:500] in raw_str:
-            return True
+        if src and len(src) >= 100:
+            sample = src[:150]
+            if sample in raw_str:
+                return True
     return False

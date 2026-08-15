@@ -3,8 +3,12 @@ import type {
   BatchStartResponse,
   BatchStatus,
   CompareResponse,
+  DaemonStartRequest,
+  DaemonStatusResponse,
+  FaultSummaryResponse,
   GradeResponse,
   PipelineVersion,
+  RunRecord,
   VersionRunsResponse,
 } from './types'
 
@@ -34,7 +38,10 @@ export const api = {
   startBatch: (body: BatchRequest) =>
     request<BatchStartResponse>('/api/batches', { method: 'POST', body: JSON.stringify(body) }),
 
-  startBatchWithUpload: async (files: File[], params: { version: string; repeats: number; allowProd: boolean; autoGrade?: boolean }) => {
+  startBatchWithUpload: async (
+    files: File[],
+    params: { version: string; repeats: number; allowProd: boolean; autoGrade?: boolean }
+  ) => {
     const formData = new FormData()
     files.forEach((f) => formData.append('files', f))
     formData.append('version', params.version)
@@ -62,5 +69,31 @@ export const api = {
     request<GradeResponse>('/api/grade', {
       method: 'POST',
       body: JSON.stringify({ version }),
+    }),
+
+  getRunDetails: (runId: number) => request<RunRecord>(`/api/runs/${runId}`),
+
+  regradeRun: (runId: number) =>
+    request<{ status: string; overall_score?: number; scores?: Record<string, number> }>(
+      `/api/runs/${runId}/regrade`,
+      { method: 'POST' }
+    ),
+
+  getFaultSummary: () => request<FaultSummaryResponse>('/api/faults/summary'),
+
+  getDaemonStatus: () => request<DaemonStatusResponse>('/api/auto/status'),
+
+  startDaemon: (params: DaemonStartRequest) =>
+    request<DaemonStatusResponse>('/api/auto/start', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  stopDaemon: () => request<DaemonStatusResponse>('/api/auto/stop', { method: 'POST' }),
+
+  triggerSweep: (params?: { version_label?: string; docs_dir?: string; repeats?: number }) =>
+    request<{ job_id: number; status: string }>('/api/auto/sweep', {
+      method: 'POST',
+      body: JSON.stringify(params || {}),
     }),
 }
