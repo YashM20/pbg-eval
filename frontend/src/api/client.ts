@@ -17,6 +17,7 @@ import type {
   SyntheticDocument,
   SyntheticEvalResult,
   TraceAnalysisResult,
+  UnifiedVersionWorkspaceResponse,
   VersionClauseMatrixResponse,
   VersionExtractionMatrixResponse,
   VersionRunsResponse,
@@ -38,6 +39,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   listVersions: () => request<PipelineVersion[]>('/api/versions'),
+
+  suggestVersionLabel: () => request<{ suggested_label: string }>('/api/versions/suggest-label'),
+
+  discoverDocuments: () =>
+    request<{ documents: { filename: string; doc_id: string; path: string; size_bytes: number; location: string }[] }>(
+      '/api/versions/discover-documents'
+    ),
+
+  getVersionWorkspace: (label: string) =>
+    request<UnifiedVersionWorkspaceResponse>(`/api/versions/${encodeURIComponent(label)}/workspace`),
 
   getVersionRuns: (label: string) =>
     request<VersionRunsResponse>(`/api/versions/${encodeURIComponent(label)}/runs`),
@@ -89,6 +100,12 @@ export const api = {
       { method: 'POST' }
     ),
 
+  replayRun: (runId: number) =>
+    request<{ replayed: boolean; original_run_id: number; new_run_id: number }>(
+      `/api/runs/${runId}/replay`,
+      { method: 'POST' }
+    ),
+
   getTraceAnalysis: (runId: number) => request<TraceAnalysisResult>(`/api/runs/${runId}/trace-analysis`),
 
   getFaultSummary: () => request<FaultSummaryResponse>('/api/faults/summary'),
@@ -109,7 +126,7 @@ export const api = {
       body: JSON.stringify(params || {}),
     }),
 
-  // Next-Level Analytical API Calls
+  // Analytical API Calls
   getClauseHeatmap: () => request<ClauseHeatmapResponse>('/api/analytics/heatmap'),
 
   getVersionClauseMatrix: (label: string) =>
@@ -152,7 +169,7 @@ export const api = {
       body: JSON.stringify(params),
     }),
 
-  // Metadata Extraction Evaluation API Calls
+  // Extraction Analytics
   getExtractionLeaderboard: () => request<ExtractionLeaderboardItem[]>('/api/extraction/leaderboard'),
 
   getVersionExtractionMatrix: (label: string) =>

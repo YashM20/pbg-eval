@@ -73,14 +73,29 @@ def get_or_create_version(
     label: str,
     prompt_hash: str = "",
     model_config: str = "{}",
+    prompt_text: str | None = None,
+    hyperparameters: str | None = None,
+    dataset_fingerprint: str | None = None,
     notes: str | None = None,
 ) -> int:
     row = conn.execute("SELECT id FROM pipeline_version WHERE label = ?", (label,)).fetchone()
     if row:
         return row[0]
     cur = conn.execute(
-        "INSERT INTO pipeline_version (label, prompt_hash, model_config, notes) VALUES (?, ?, ?, ?)",
-        (label, prompt_hash or hashlib.sha256(label.encode()).hexdigest()[:16], model_config, notes),
+        """
+        INSERT INTO pipeline_version (
+            label, prompt_hash, model_config, prompt_text, hyperparameters, dataset_fingerprint, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            label,
+            prompt_hash or hashlib.sha256(label.encode()).hexdigest()[:16],
+            model_config,
+            prompt_text,
+            hyperparameters,
+            dataset_fingerprint,
+            notes,
+        ),
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
@@ -502,12 +517,92 @@ def start_run(
     allow_prod: bool = False,
     prompt_hash: str = "",
     model_config: str = "{}",
+    prompt_text: str | None = None,
+    hyperparameters: str | None = None,
+    dataset_fingerprint: str | None = None,
     config: Config | None = None,
 ) -> tuple[int, int]:
     config = config or get_config()
     conn = connect(config.db_path)
     fixtures = load_fixtures(docs_dir)
-    version_id = get_or_create_version(conn, version_label, prompt_hash, model_config)
+    version_id = get_or_create_version(
+        conn,
+        version_label,
+        prompt_hash,
+        model_config,
+        prompt_text=prompt_text,
+        hyperparameters=hyperparameters,
+        dataset_fingerprint=dataset_fingerprint,
+    )
     job_id = create_eval_job(conn, version_id, len(fixtures) * repeats)
     conn.close()
     return job_id, version_id
+
+
+def replay_run(run_id: int, config: Config | None = None) -> int:
+    """Execute an exact replay of a historical run with full provenance preservation."""
+    config = config or get_config()
+    conn = connect(config.db_path)
+    row = conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Run {run_id} not found")
+
+    version_id = row["version_id"]
+    doc_id = row["doc_id"]
+    backend_doc_id = row["backend_doc_id"]
+    backend_job_id = row["backend_job_id"]
+    master_text = row["master_text"]
+    vendor_text = row["vendor_text"]
+
+    client = BackendClient(config)
+    client.login()
+
+    logger.info("[RunService] Replaying run %d (doc: %s, job: %s)...", run_id, doc_id, backend_job_id)
+    result = client.run_repeat(backend_doc_id, backend_job_id)
+    raw = BackendClient.serialize_comparison(result)
+    latency = result.get("_latency")
+    meta = result.get("vendorMetadata") or {}
+    extraction_ok, _ = check_extraction(meta)
+    reason = check_output(raw, master_text, vendor_text)
+    status = "excluded" if reason else "pending"
+
+    fixture = DocFixture(doc_id=doc_id, backend_doc_id=backend_doc_id, master_text=master_text, vendor_text=vendor_text)
+    cur = conn.execute(
+        """
+        INSERT INTO run (
+            version_id, job_id, doc_id, backend_doc_id, backend_job_id, latency_seconds,
+            raw_qwen_output, thinking_trace, master_text, vendor_text, extraction_ok,
+            status, exclusion_reason, heal_count, is_replay
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        """,
+        (
+            version_id,
+            row["job_id"],
+            doc_id,
+            backend_doc_id,
+            backend_job_id,
+            latency,
+            raw,
+            result.get("_trace"),
+            master_text,
+            vendor_text,
+            int(extraction_ok),
+            status,
+            reason,
+            0,
+        ),
+    )
+    new_run_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Re-grade the replayed run
+    if status != "excluded":
+        try:
+            from app.routers.evaluations import regrade_run
+            regrade_run(new_run_id)
+        except Exception:
+            pass
+
+    return new_run_id

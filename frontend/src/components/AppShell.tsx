@@ -8,7 +8,7 @@ export function AppShell() {
     <>
       <header className="top-nav">
         <NavLink to="/versions" className="top-nav__brand" onClick={() => setMenuOpen(false)}>
-          PBG Eval <span style={{ fontSize: '0.75rem', color: 'var(--color-accent-teal)', fontWeight: 400 }}>v0.4.0</span>
+          PBG Eval <span style={{ fontSize: '0.75rem', color: 'var(--color-accent-teal)', fontWeight: 400 }}>v0.5.0</span>
         </NavLink>
         <button
           type="button"
@@ -21,37 +21,22 @@ export function AppShell() {
         <ul className={`top-nav__links${menuOpen ? ' open' : ''}`}>
           <li>
             <NavLink to="/versions" onClick={() => setMenuOpen(false)}>
-              Leaderboard
+              Evaluation Hub
             </NavLink>
           </li>
           <li>
-            <NavLink to="/extraction" onClick={() => setMenuOpen(false)}>
-              Metadata Extraction
+            <NavLink to="/compare" onClick={() => setMenuOpen(false)}>
+              Version Compare
             </NavLink>
           </li>
           <li>
-            <NavLink to="/clause-matrix" onClick={() => setMenuOpen(false)}>
-              Clause Matrix
-            </NavLink>
-          </li>
-          <li>
-            <NavLink to="/prompt-studio" onClick={() => setMenuOpen(false)}>
-              Prompt Studio
+            <NavLink to="/studio" onClick={() => setMenuOpen(false)}>
+              Prompt Studio & Auto
             </NavLink>
           </li>
           <li>
             <NavLink to="/synthetic" onClick={() => setMenuOpen(false)}>
               Synthetic Lab
-            </NavLink>
-          </li>
-          <li>
-            <NavLink to="/compare" onClick={() => setMenuOpen(false)}>
-              Compare
-            </NavLink>
-          </li>
-          <li>
-            <NavLink to="/auto-eval" onClick={() => setMenuOpen(false)}>
-              Auto-Eval
             </NavLink>
           </li>
           <li>

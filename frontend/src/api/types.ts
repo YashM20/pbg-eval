@@ -12,6 +12,9 @@ export interface PipelineVersion {
   label: string
   prompt_hash: string
   model_config: string
+  prompt_text?: string | null
+  hyperparameters?: string | null
+  dataset_fingerprint?: string | null
   created_at: string
   notes: string | null
   run_count: number
@@ -19,6 +22,7 @@ export interface PipelineVersion {
   exclusion_rate: number
   heal_count?: number
   score_stats: ScoreStats
+  extraction_score?: number | null
 }
 
 export interface BatchRequest {
@@ -82,7 +86,13 @@ export interface RunRecord {
   grader_notes: string | null
   independent_read: string | null
   thinking_trace?: string | null
+  has_trace?: boolean
   heal_count?: number
+  is_replay?: number | boolean
+  overall_extraction_score?: number | null
+  field_discrepancies?: any[]
+  target_metadata?: any
+  ground_truth_metadata?: any
 }
 
 export interface VersionRunsResponse {
@@ -91,10 +101,31 @@ export interface VersionRunsResponse {
   variance_by_doc: Record<string, ScoreStats>
 }
 
+export interface CompareRankingItem {
+  label: string
+  mean: number | null
+  exclusion_rate: number
+  extraction_score?: number | null
+}
+
 export interface CompareResponse {
-  v1: PipelineVersion
-  v2: PipelineVersion
-  ranking: { label: string; mean: number | null; exclusion_rate: number }[]
+  v1: PipelineVersion & { label: string; score_stats: ScoreStats; extraction_score?: number | null; run_count: number; exclusion_rate: number }
+  v2: PipelineVersion & { label: string; score_stats: ScoreStats; extraction_score?: number | null; run_count: number; exclusion_rate: number }
+  corpus?: {
+    is_identical: boolean
+    common_doc_count: number
+    common_docs: string[]
+  }
+  deltas?: {
+    raw_score_delta: number
+    normalized_score_delta: number
+    extraction_score_delta: number
+    exclusion_rate_delta_pct: number
+    v1_normalized_mean: number
+    v2_normalized_mean: number
+  }
+  clause_diffs?: { section: string; v1_f1: number; v2_f1: number; f1_delta: number }[]
+  ranking: CompareRankingItem[]
 }
 
 export interface FaultEventDetail {
@@ -135,7 +166,6 @@ export interface DaemonStartRequest {
   repeats?: number
 }
 
-// Next-Level Types
 export interface ClauseSectionMetric {
   section: string
   true_positives: number
@@ -240,7 +270,12 @@ export interface QualityGateResponse {
   stdev: number | null
 }
 
-// Metadata Extraction Evaluation Types
+export interface ExtractionFieldBreakdown {
+  field: string
+  mean_score: number
+  exact_match_rate: number
+}
+
 export interface ExtractionLeaderboardItem {
   version_id: number
   label: string
@@ -251,10 +286,12 @@ export interface ExtractionLeaderboardItem {
   exact_match_rates: Record<string, number>
 }
 
-export interface ExtractionFieldBreakdown {
-  field: string
-  mean_score: number
-  exact_match_rate: number
+export interface RunExtractionGradeResponse {
+  run_id: number
+  overall_score: number
+  target_metadata?: Record<string, any>
+  ground_truth_metadata?: Record<string, any>
+  field_discrepancies?: { field: string; target: any; ground_truth: any; score: number; note: string }[]
 }
 
 export interface ExtractionRunItem {
@@ -275,13 +312,24 @@ export interface VersionExtractionMatrixResponse {
   runs: ExtractionRunItem[]
 }
 
-export interface RunExtractionGradeResponse {
-  run_id: number
-  overall_extraction_score: number
-  field_scores: Record<string, number>
-  exact_matches: Record<string, boolean>
-  target_metadata: Record<string, any>
-  ground_truth_metadata: Record<string, any>
-  field_discrepancies: { field: string; target: any; ground_truth: any; score: number; note: string }[]
-  graded_at: string
+export interface UnifiedVersionWorkspaceResponse {
+  version: PipelineVersion
+  summary: {
+    total_runs: number
+    scored_runs: number
+    excluded_runs: number
+    heal_count: number
+    exclusion_rate: number
+    score_stats: ScoreStats
+    overall_extraction_score: number | null
+  }
+  health_insights: {
+    status: string
+    weaknesses: string[]
+    recommendations: string[]
+  }
+  runs: RunRecord[]
+  variance_by_doc: Record<string, ScoreStats>
+  clause_matrix: ClauseSectionMetric[]
+  extraction_breakdown: ExtractionFieldBreakdown[]
 }

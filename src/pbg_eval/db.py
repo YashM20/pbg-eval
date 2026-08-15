@@ -37,12 +37,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE run ADD COLUMN thinking_trace TEXT")
     if "heal_count" not in run_cols:
         conn.execute("ALTER TABLE run ADD COLUMN heal_count INTEGER NOT NULL DEFAULT 0")
+    if "is_replay" not in run_cols:
+        conn.execute("ALTER TABLE run ADD COLUMN is_replay INTEGER NOT NULL DEFAULT 0")
 
     eval_cols = {row["name"] for row in conn.execute("PRAGMA table_info(eval_job)")}
     if "stopped" not in eval_cols:
         conn.execute("ALTER TABLE eval_job ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0")
     if "finished_at" not in eval_cols:
         conn.execute("ALTER TABLE eval_job ADD COLUMN finished_at TEXT")
+
+    ver_cols = {row["name"] for row in conn.execute("PRAGMA table_info(pipeline_version)")}
+    if "prompt_text" not in ver_cols:
+        conn.execute("ALTER TABLE pipeline_version ADD COLUMN prompt_text TEXT")
+    if "hyperparameters" not in ver_cols:
+        conn.execute("ALTER TABLE pipeline_version ADD COLUMN hyperparameters TEXT")
+    if "dataset_fingerprint" not in ver_cols:
+        conn.execute("ALTER TABLE pipeline_version ADD COLUMN dataset_fingerprint TEXT")
 
     grade_cols = {row["name"] for row in conn.execute("PRAGMA table_info(grade)")}
     if "graded_at" not in grade_cols:

@@ -78,7 +78,7 @@ export function JobProgress({ status, error }: JobProgressProps) {
           <span className="badge-pill badge-pill--error">Failed</span>
         )}
         {phase === 'stopped' && (
-          <span className="badge-pill badge-pill--warn">Stopped</span>
+          <span className="badge-pill badge-pill--warn">✓ Stopped & GPU VRAM Evicted</span>
         )}
       </div>
       {phase === 'running' && (

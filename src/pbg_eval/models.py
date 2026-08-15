@@ -24,7 +24,10 @@ class PipelineVersion:
     label: str
     prompt_hash: str
     model_config: str
-    created_at: str
+    prompt_text: str | None = None
+    hyperparameters: str | None = None
+    dataset_fingerprint: str | None = None
+    created_at: str | None = None
     notes: str | None = None
 
 
@@ -58,6 +61,7 @@ class Run:
     status: str
     exclusion_reason: str | None = None
     heal_count: int = 0
+    is_replay: int = 0
     job_id: int | None = None
 
 

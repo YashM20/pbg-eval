@@ -17,11 +17,50 @@ async def test_api_health():
 
 
 @pytest.mark.asyncio
-async def test_api_versions():
+async def test_api_versions_and_workspace():
+    conn = connect(get_config().db_path)
+    label = f"test-ws-{uuid.uuid4().hex[:6]}"
+    cur = conn.execute("INSERT INTO pipeline_version (label, prompt_hash, model_config) VALUES (?, 'h', '{}')", (label,))
+    vid = cur.lastrowid
+    cur_run = conn.execute("INSERT INTO run (version_id, doc_id, status) VALUES (?, 'doc-ws-1', 'scored')", (vid,))
+    run_id = cur_run.lastrowid
+    conn.execute(
+        """
+        INSERT INTO grade (
+            run_id, deviation_recall, deviation_precision, severity_correctness,
+            reasoning_quality, schema_integrity, scope_discipline, overall_score,
+            independent_read
+        ) VALUES (?, 9.0, 9.0, 9.0, 9.0, 9.0, 10.0, 9.2, '{}')
+        """,
+        (run_id,)
+    )
+    conn.commit()
+    conn.close()
+
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # Suggest version
+        sug_resp = await client.get("/api/versions/suggest-label")
+        assert sug_resp.status_code == 200
+        assert "suggested_label" in sug_resp.json()
+
+        # Discover documents
+        disc_resp = await client.get("/api/versions/discover-documents")
+        assert disc_resp.status_code == 200
+        assert "documents" in disc_resp.json()
+
+        # List versions
         resp = await client.get("/api/versions")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
+
+        # Unified Version Workspace
+        ws_resp = await client.get(f"/api/versions/{label}/workspace")
+        assert ws_resp.status_code == 200
+        ws_data = ws_resp.json()
+        assert ws_data["version"]["label"] == label
+        assert "health_insights" in ws_data
+        assert "clause_matrix" in ws_data
+        assert len(ws_data["runs"]) >= 1
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,9 @@ CREATE TABLE IF NOT EXISTS pipeline_version (
     label TEXT NOT NULL UNIQUE,
     prompt_hash TEXT NOT NULL,
     model_config TEXT NOT NULL,
+    prompt_text TEXT,
+    hyperparameters TEXT,
+    dataset_fingerprint TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     notes TEXT
 );
@@ -35,7 +38,8 @@ CREATE TABLE IF NOT EXISTS run (
     extraction_ok INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending', -- pending | scored | excluded
     exclusion_reason TEXT,
-    heal_count INTEGER NOT NULL DEFAULT 0
+    heal_count INTEGER NOT NULL DEFAULT 0,
+    is_replay INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_version ON run(version_id);
