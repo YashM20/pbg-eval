@@ -1,6 +1,9 @@
+"""Dedicated Metadata Extraction evaluation package for pbg-eval."""
+
+from __future__ import annotations
+
 import re
 from typing import Any
-
 
 FIELDS = ("bank_name", "amount", "validity", "bg_number")
 _FIELD_MAP = {
@@ -12,7 +15,7 @@ _FIELD_MAP = {
 
 
 def check_extraction(vendor_metadata: dict[str, Any] | None) -> tuple[bool, dict[str, bool]]:
-    """Binary pass/fail per extraction field."""
+    """Binary pass/fail per extraction field (used for fast run filtering)."""
     meta = vendor_metadata or {}
     results: dict[str, bool] = {}
     for field, keys in _FIELD_MAP.items():

@@ -2,13 +2,23 @@ import type {
   BatchRequest,
   BatchStartResponse,
   BatchStatus,
+  ClauseHeatmapResponse,
   CompareResponse,
   DaemonStartRequest,
   DaemonStatusResponse,
+  ExtractionLeaderboardItem,
   FaultSummaryResponse,
   GradeResponse,
   PipelineVersion,
+  PromptMutationResponse,
+  QualityGateResponse,
+  RunExtractionGradeResponse,
   RunRecord,
+  SyntheticDocument,
+  SyntheticEvalResult,
+  TraceAnalysisResult,
+  VersionClauseMatrixResponse,
+  VersionExtractionMatrixResponse,
   VersionRunsResponse,
 } from './types'
 
@@ -79,6 +89,8 @@ export const api = {
       { method: 'POST' }
     ),
 
+  getTraceAnalysis: (runId: number) => request<TraceAnalysisResult>(`/api/runs/${runId}/trace-analysis`),
+
   getFaultSummary: () => request<FaultSummaryResponse>('/api/faults/summary'),
 
   getDaemonStatus: () => request<DaemonStatusResponse>('/api/auto/status'),
@@ -96,4 +108,62 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(params || {}),
     }),
+
+  // Next-Level Analytical API Calls
+  getClauseHeatmap: () => request<ClauseHeatmapResponse>('/api/analytics/heatmap'),
+
+  getVersionClauseMatrix: (label: string) =>
+    request<VersionClauseMatrixResponse>(`/api/analytics/versions/${encodeURIComponent(label)}/matrix`),
+
+  getSyntheticSuite: () => request<SyntheticDocument[]>('/api/synthetic/suite'),
+
+  evaluateSynthetic: (docId: string, rawOutput: string) =>
+    request<SyntheticEvalResult>('/api/synthetic/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({ doc_id: docId, raw_output: rawOutput }),
+    }),
+
+  getBaselinePrompt: () => request<{ baseline_prompt: string }>('/api/studio/baseline-prompt'),
+
+  diagnosePrompt: (versionLabel: string) =>
+    request<any>('/api/studio/diagnose', {
+      method: 'POST',
+      body: JSON.stringify({ version_label: versionLabel }),
+    }),
+
+  mutatePrompt: (versionLabel: string, baselinePrompt: string, focusObjective: string = 'balanced') =>
+    request<PromptMutationResponse>('/api/studio/mutate', {
+      method: 'POST',
+      body: JSON.stringify({
+        version_label: versionLabel,
+        baseline_prompt: baselinePrompt,
+        focus_objective: focusObjective,
+      }),
+    }),
+
+  evaluateQualityGate: (params: {
+    version_label: string
+    min_overall_score?: number
+    max_exclusion_rate?: number
+    max_stdev?: number
+  }) =>
+    request<QualityGateResponse>('/api/gates/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
+  // Metadata Extraction Evaluation API Calls
+  getExtractionLeaderboard: () => request<ExtractionLeaderboardItem[]>('/api/extraction/leaderboard'),
+
+  getVersionExtractionMatrix: (label: string) =>
+    request<VersionExtractionMatrixResponse>(`/api/extraction/versions/${encodeURIComponent(label)}/matrix`),
+
+  getRunExtractionGrade: (runId: number) =>
+    request<RunExtractionGradeResponse>(`/api/extraction/runs/${runId}`),
+
+  gradeVersionMetadata: (versionLabel: string) =>
+    request<{ version: string; graded_runs: number; errors: string[] }>(
+      `/api/extraction/grade/${encodeURIComponent(versionLabel)}`,
+      { method: 'POST' }
+    ),
 }

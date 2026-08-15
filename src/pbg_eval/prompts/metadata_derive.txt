@@ -1,0 +1,30 @@
+You are an independent data auditor extracting factual metadata from a vendor-submitted Bank Guarantee (PBG) document.
+Read ONLY the vendor document below and extract the 8 factual metadata fields accurately.
+
+<vendor_document>
+{{VENDOR_TEXT}}
+</vendor_document>
+
+## Instructions:
+1. bgNumber: Extract the exact Bank Guarantee identifier.
+2. amendmentDate: The date of issue or amendment of this guarantee. Look for Date of Issue, Issue Date, or date under bank letterhead.
+3. validityDate: The expiry date of the guarantee (e.g. from Clause 5 or header).
+4. claimPeriod: The final claim end date (on or before date for submitting demands).
+5. amount: The guarantee liability limit (amount in numbers + currency + amount in words). Do NOT extract total contract value.
+6. poNo: The Purchase Order, Contract, or LOA number.
+7. vendorName: The supplier / contractor company on whose behalf the guarantee is issued (NOT the bank, NOT IOCL).
+8. bankBranchAddress: The issuing bank name and postal branch address. Stop before any legal prose ("hereinafter", "hereby undertake", etc.).
+
+Return JSON ONLY:
+{
+  "vendorMetadata": {
+    "bgNumber": "",
+    "amendmentDate": "",
+    "validityDate": "",
+    "claimPeriod": "",
+    "amount": "",
+    "poNo": "",
+    "vendorName": "",
+    "bankBranchAddress": ""
+  }
+}

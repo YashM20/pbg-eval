@@ -478,16 +478,19 @@ def execute_run_batch(
         except Exception:
             pass
 
-    # Auto-grade if enabled (runs in separate connection after batch finishes)
+    # Auto-grade comparison and metadata extraction if enabled
     if auto_grade and not was_stopped:
-        logger.info("Auto-grading version '%s'...", version_label)
+        logger.info("Auto-grading version '%s' (Comparison & Metadata Extraction)...", version_label)
         try:
             from pbg_eval.services.grade import grade_version
+            from pbg_eval.extraction.analytics import grade_version_metadata
             grade_res = grade_version(version_label, config)
             logger.info(
-                "Auto-grade complete: graded=%d, excluded=%d, errors=%d",
+                "Auto-grade comparison complete: graded=%d, excluded=%d, errors=%d",
                 grade_res["graded"], grade_res["excluded"], len(grade_res["errors"])
             )
+            meta_res = grade_version_metadata(version_label)
+            logger.info("Auto-grade metadata extraction complete: graded=%d runs", meta_res.get("graded_runs", 0))
         except Exception as exc:
             logger.error("Auto-grade failed: %s", exc)
 

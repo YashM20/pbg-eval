@@ -134,3 +134,154 @@ export interface DaemonStartRequest {
   docs_dir?: string
   repeats?: number
 }
+
+// Next-Level Types
+export interface ClauseSectionMetric {
+  section: string
+  true_positives: number
+  false_positives: number
+  false_negatives: number
+  recall: number
+  precision: number
+  f1_score: number
+  critical_count: number
+  major_count: number
+  minor_count: number
+  sample_errors: { type: string; doc_id: string; details: string }[]
+}
+
+export interface VersionClauseMatrixResponse {
+  version: string
+  total_scored_runs: number
+  sections: ClauseSectionMetric[]
+}
+
+export interface ClauseHeatmapResponse {
+  canonical_sections: string[]
+  versions: VersionClauseMatrixResponse[]
+}
+
+export interface InjectedAnomaly {
+  id: string
+  name: string
+  clause_no: string
+  appearing_in_bg: string
+  should_be_corrected_as: string
+  severity: string
+  reason: string
+}
+
+export interface SyntheticDocument {
+  doc_id: string
+  title: string
+  description: string
+  vendor_text: string
+  master_text: string
+  injected_anomalies: InjectedAnomaly[]
+}
+
+export interface SyntheticEvalResult {
+  doc_id: string
+  title: string
+  total_injected: number
+  caught_count: number
+  recall: number
+  matched: { anomaly_id: string; anomaly_name: string; matched_deviation: any }[]
+  missed: InjectedAnomaly[]
+  total_reported_deviations: number
+  passed: boolean
+}
+
+export interface PromptCandidate {
+  name: string
+  strategy: string
+  mutated_prompt: string
+}
+
+export interface PromptDiagnosticReport {
+  version: string
+  total_runs: number
+  excluded_count: number
+  low_score_count: number
+  diagnostics: {
+    recall_weaknesses: any[]
+    precision_weaknesses: any[]
+    severity_weaknesses: any[]
+    scope_weaknesses: any[]
+  }
+  recommendations: string[]
+}
+
+export interface PromptMutationResponse {
+  version_label: string
+  diagnosis: PromptDiagnosticReport
+  candidates: PromptCandidate[]
+}
+
+export interface TraceAnalysisResult {
+  has_trace: boolean
+  thinking_chars: number
+  content_chars: number
+  thinking_tokens_est: number
+  content_tokens_est: number
+  ratio: number
+  milestones_evaluated: string[]
+  repetition_score: number
+  repeated_phrases: string[]
+  discrepancies: string[]
+}
+
+export interface QualityGateResponse {
+  version_label: string
+  verdict: 'PASSED' | 'BLOCKED'
+  checks: Record<string, { threshold: number; actual: number | null; passed: boolean }>
+  score_mean: number | null
+  exclusion_rate: number
+  stdev: number | null
+}
+
+// Metadata Extraction Evaluation Types
+export interface ExtractionLeaderboardItem {
+  version_id: number
+  label: string
+  created_at: string
+  evaluated_runs: number
+  overall_extraction_score: number
+  field_averages: Record<string, number>
+  exact_match_rates: Record<string, number>
+}
+
+export interface ExtractionFieldBreakdown {
+  field: string
+  mean_score: number
+  exact_match_rate: number
+}
+
+export interface ExtractionRunItem {
+  run_id: number
+  doc_id: string
+  timestamp: string
+  overall_score: number
+  target_metadata: Record<string, any>
+  ground_truth_metadata: Record<string, any>
+  field_discrepancies: { field: string; target: any; ground_truth: any; score: number; note: string }[]
+}
+
+export interface VersionExtractionMatrixResponse {
+  version: string
+  evaluated_runs: number
+  overall_extraction_score: number
+  fields: ExtractionFieldBreakdown[]
+  runs: ExtractionRunItem[]
+}
+
+export interface RunExtractionGradeResponse {
+  run_id: number
+  overall_extraction_score: number
+  field_scores: Record<string, number>
+  exact_matches: Record<string, boolean>
+  target_metadata: Record<string, any>
+  ground_truth_metadata: Record<string, any>
+  field_discrepancies: { field: string; target: any; ground_truth: any; score: number; note: string }[]
+  graded_at: string
+}

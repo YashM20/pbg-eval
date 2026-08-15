@@ -37,6 +37,20 @@ def get_run(run_id: int):
     return dict(row)
 
 
+@router.get("/{run_id}/trace-analysis")
+def get_run_trace_analysis(run_id: int):
+    """Perform deep analysis of a run's thinking chain, token ratio, and loops."""
+    from pbg_eval.analytics.trace_diagnostics import analyze_thinking_trace
+    conn = connect(get_config().db_path)
+    row = conn.execute("SELECT thinking_trace, raw_qwen_output FROM run WHERE id = ?", (run_id,)).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(404, f"Run {run_id} not found")
+
+    return analyze_thinking_trace(row["thinking_trace"], row["raw_qwen_output"])
+
+
 @router.post("/{run_id}/regrade")
 def regrade_run(run_id: int):
     """Re-grade an individual run with Gemini judge."""

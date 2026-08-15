@@ -57,6 +57,34 @@ CREATE TABLE IF NOT EXISTS grade (
     graded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS extraction_grade (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL UNIQUE REFERENCES run(id),
+    score_bg_number REAL NOT NULL,
+    score_amendment_date REAL NOT NULL,
+    score_validity_date REAL NOT NULL,
+    score_claim_period REAL NOT NULL,
+    score_amount REAL NOT NULL,
+    score_po_no REAL NOT NULL,
+    score_vendor_name REAL NOT NULL,
+    score_bank_branch_address REAL NOT NULL,
+    overall_extraction_score REAL NOT NULL,
+    em_bg_number INTEGER NOT NULL DEFAULT 0,
+    em_amendment_date INTEGER NOT NULL DEFAULT 0,
+    em_validity_date INTEGER NOT NULL DEFAULT 0,
+    em_claim_period INTEGER NOT NULL DEFAULT 0,
+    em_amount INTEGER NOT NULL DEFAULT 0,
+    em_po_no INTEGER NOT NULL DEFAULT 0,
+    em_vendor_name INTEGER NOT NULL DEFAULT 0,
+    em_bank_branch_address INTEGER NOT NULL DEFAULT 0,
+    target_metadata TEXT NOT NULL,
+    ground_truth_metadata TEXT NOT NULL,
+    field_discrepancies TEXT,
+    graded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_extract_grade_run ON extraction_grade(run_id);
+
 CREATE TABLE IF NOT EXISTS fault_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER REFERENCES run(id),

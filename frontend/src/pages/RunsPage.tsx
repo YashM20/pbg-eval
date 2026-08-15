@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { RunRecord, VersionRunsResponse } from '../api/types'
+import type { VersionRunsResponse } from '../api/types'
 import { VarianceChart } from '../components/Charts'
+import { MetadataDiffViewer } from '../components/MetadataDiffViewer'
 import { Card, formatJson, StatusBadge } from '../components/shared'
+import { TraceViewer } from '../components/TraceViewer'
 
-function RunRow({ run, onRegrade }: { run: RunRecord; onRegrade: () => void }) {
+function RunRow({ run, onRegrade }: { run: any; onRegrade: () => void }) {
   const [openAudit, setOpenAudit] = useState(false)
   const [openTrace, setOpenTrace] = useState(false)
+  const [openExtract, setOpenExtract] = useState(false)
   const [regrading, setRegrading] = useState(false)
 
   const hasAudit = run.grader_notes || run.independent_read
   const hasTrace = Boolean(run.thinking_trace)
+  const hasExtractGrade = Boolean(run.field_discrepancies && run.field_discrepancies.length > 0)
 
   const handleRegrade = async () => {
     setRegrading(true)
@@ -33,13 +37,15 @@ function RunRow({ run, onRegrade }: { run: RunRecord; onRegrade: () => void }) {
         <td style={{ fontWeight: 600, color: (run.overall_score ?? 0) >= 7 ? 'var(--color-success)' : 'inherit' }}>
           {run.overall_score ?? '—'}
         </td>
+        <td style={{ fontWeight: 600, color: (run.overall_extraction_score ?? 0) >= 7 ? '#0d9488' : 'inherit' }}>
+          {run.overall_extraction_score ? run.overall_extraction_score.toFixed(1) : (run.extraction_ok ? '✓' : '✗')}
+        </td>
         <td>{run.deviation_recall ?? '—'}</td>
         <td>{run.deviation_precision ?? '—'}</td>
         <td>{run.severity_correctness ?? '—'}</td>
         <td>{run.reasoning_quality ?? '—'}</td>
         <td>{run.schema_integrity ?? '—'}</td>
         <td>{run.scope_discipline ?? '—'}</td>
-        <td>{run.extraction_ok ? '✓' : '✗'}</td>
         <td style={{ textAlign: 'center' }}>
           {(run.heal_count ?? 0) > 0 ? (
             <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{run.heal_count}</span>
@@ -54,6 +60,16 @@ function RunRow({ run, onRegrade }: { run: RunRecord; onRegrade: () => void }) {
                 {openAudit ? 'Hide audit' : 'Grader audit'}
               </button>
             )}
+            {hasExtractGrade && (
+              <button
+                type="button"
+                className="audit-toggle"
+                style={{ borderColor: '#0d9488', color: '#0d9488' }}
+                onClick={() => setOpenExtract(!openExtract)}
+              >
+                {openExtract ? 'Hide extract' : 'Extract audit'}
+              </button>
+            )}
             {hasTrace && (
               <button
                 type="button"
@@ -61,7 +77,7 @@ function RunRow({ run, onRegrade }: { run: RunRecord; onRegrade: () => void }) {
                 style={{ borderColor: 'var(--color-accent-teal)', color: 'var(--color-accent-teal)' }}
                 onClick={() => setOpenTrace(!openTrace)}
               >
-                {openTrace ? 'Hide trace' : 'Thinking trace'}
+                {openTrace ? 'Hide trace' : 'Trace'}
               </button>
             )}
             <button
@@ -89,15 +105,21 @@ function RunRow({ run, onRegrade }: { run: RunRecord; onRegrade: () => void }) {
         </tr>
       )}
 
+      {openExtract && hasExtractGrade && (
+        <tr>
+          <td colSpan={12}>
+            <MetadataDiffViewer
+              fieldDiscrepancies={run.field_discrepancies}
+              overallScore={run.overall_extraction_score || 0}
+            />
+          </td>
+        </tr>
+      )}
+
       {openTrace && hasTrace && (
         <tr>
           <td colSpan={12}>
-            <div className="audit-panel" style={{ borderLeft: '3px solid var(--color-accent-teal)' }}>
-              <strong>Qwen Reasoning / Thinking Trace</strong>
-              <pre style={{ maxHeight: '300px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
-                {run.thinking_trace}
-              </pre>
-            </div>
+            <TraceViewer runId={run.id} traceText={run.thinking_trace} />
           </td>
         </tr>
       )}
@@ -136,6 +158,7 @@ export function RunsPage() {
     setGradeResult(null)
     try {
       const res = await api.gradeVersion(label)
+      await api.gradeVersionMetadata(label).catch(() => {})
       setGradeResult(`Graded ${res.graded}, excluded ${res.excluded}${res.errors.length ? `; errors: ${res.errors.join('; ')}` : ''}`)
       await load()
     } catch (e) {
@@ -228,13 +251,13 @@ export function RunsPage() {
                 <th>Doc</th>
                 <th>Time</th>
                 <th>Overall</th>
+                <th>Extraction</th>
                 <th>Recall</th>
                 <th>Precision</th>
                 <th>Severity</th>
                 <th>Reason</th>
                 <th>Schema</th>
                 <th>Scope</th>
-                <th>Extract</th>
                 <th>Heals</th>
                 <th />
               </tr>

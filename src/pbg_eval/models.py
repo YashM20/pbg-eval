@@ -78,6 +78,33 @@ class Grade:
 
 
 @dataclass
+class ExtractionGrade:
+    id: int
+    run_id: int
+    score_bg_number: float
+    score_amendment_date: float
+    score_validity_date: float
+    score_claim_period: float
+    score_amount: float
+    score_po_no: float
+    score_vendor_name: float
+    score_bank_branch_address: float
+    overall_extraction_score: float
+    em_bg_number: int
+    em_amendment_date: int
+    em_validity_date: int
+    em_claim_period: int
+    em_amount: int
+    em_po_no: int
+    em_vendor_name: int
+    em_bank_branch_address: int
+    target_metadata: str
+    ground_truth_metadata: str
+    field_discrepancies: str
+    graded_at: str | None = None
+
+
+@dataclass
 class FaultLog:
     id: int
     run_id: int | None

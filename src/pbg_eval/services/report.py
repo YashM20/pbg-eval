@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
 from typing import Any
@@ -49,6 +50,19 @@ def list_versions() -> list[dict[str, Any]]:
             (vid,),
         ).fetchall()
         scores = [r["overall_score"] for r in scored if r["overall_score"] is not None]
+
+        # Fetch average extraction score
+        ext_row = conn.execute(
+            """
+            SELECT AVG(eg.overall_extraction_score) as mean_ext
+            FROM extraction_grade eg
+            JOIN run r ON r.id = eg.run_id
+            WHERE r.version_id = ?
+            """,
+            (vid,),
+        ).fetchone()
+        mean_ext = round(ext_row["mean_ext"], 2) if ext_row and ext_row["mean_ext"] is not None else None
+
         result.append({
             "id": vid,
             "label": v["label"],
@@ -61,6 +75,7 @@ def list_versions() -> list[dict[str, Any]]:
             "heal_count": total_heals,
             "exclusion_rate": round(excluded / total, 3) if total else 0,
             "score_stats": _stats(scores),
+            "extraction_score": mean_ext,
         })
     conn.close()
     return result
@@ -77,16 +92,27 @@ def version_runs(label: str) -> dict[str, Any]:
         """
         SELECT r.*, g.overall_score, g.deviation_recall, g.deviation_precision,
                g.severity_correctness, g.reasoning_quality, g.schema_integrity,
-               g.scope_discipline, g.grader_notes, g.independent_read
+               g.scope_discipline, g.grader_notes, g.independent_read,
+               eg.overall_extraction_score, eg.target_metadata, eg.ground_truth_metadata, eg.field_discrepancies
         FROM run r
         LEFT JOIN grade g ON g.run_id = r.id
+        LEFT JOIN extraction_grade eg ON eg.run_id = r.id
         WHERE r.version_id = ?
         ORDER BY r.doc_id, r.timestamp
         """,
         (version["id"],),
     ).fetchall()
 
-    runs = [dict(r) for r in rows]
+    runs = []
+    for r in rows:
+        d = dict(r)
+        if d.get("field_discrepancies"):
+            try:
+                d["field_discrepancies"] = json.loads(d["field_discrepancies"])
+            except Exception:
+                pass
+        runs.append(d)
+
     by_doc: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         if r["overall_score"] is not None:
@@ -117,7 +143,15 @@ def compare_versions(v1: str, v2: str) -> dict[str, Any]:
     return {
         "v1": a,
         "v2": b,
-        "ranking": [{"label": v["label"], "mean": v["score_stats"]["mean"], "exclusion_rate": v["exclusion_rate"]} for v in ranked],
+        "ranking": [
+            {
+                "label": v["label"],
+                "mean": v["score_stats"]["mean"],
+                "exclusion_rate": v["exclusion_rate"],
+                "extraction_score": v.get("extraction_score"),
+            }
+            for v in ranked
+        ],
     }
 
 
