@@ -330,6 +330,69 @@ def regrade_run(run_id: int):
             ),
         )
         conn.execute("UPDATE run SET status = 'scored' WHERE id = ?", (run_id,))
+
+        # Also evaluate metadata extraction if available
+        try:
+            from pbg_eval.extraction.judge import MetadataJudge
+            judge = MetadataJudge(config)
+            target_data = json.loads(raw)
+            target_meta = target_data.get("vendorMetadata", {})
+            ground_meta = derivation.get("vendorMetadata", {}) if isinstance(derivation, dict) else {}
+            if not ground_meta and vendor:
+                ground_meta = judge.derive_ground_truth(vendor)
+
+            eval_res = judge.evaluate_metadata(target_meta, ground_meta)
+            fs = eval_res["field_scores"]
+            em = eval_res["exact_matches"]
+            overall_ext = eval_res["overall_extraction_score"]
+
+            conn.execute(
+                """
+                INSERT INTO extraction_grade (
+                    run_id, score_bg_number, score_amendment_date, score_validity_date,
+                    score_claim_period, score_amount, score_po_no, score_vendor_name,
+                    score_bank_branch_address, overall_extraction_score,
+                    em_bg_number, em_amendment_date, em_validity_date, em_claim_period,
+                    em_amount, em_po_no, em_vendor_name, em_bank_branch_address,
+                    target_metadata, ground_truth_metadata, field_discrepancies
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    score_bg_number = excluded.score_bg_number,
+                    score_amendment_date = excluded.score_amendment_date,
+                    score_validity_date = excluded.score_validity_date,
+                    score_claim_period = excluded.score_claim_period,
+                    score_amount = excluded.score_amount,
+                    score_po_no = excluded.score_po_no,
+                    score_vendor_name = excluded.score_vendor_name,
+                    score_bank_branch_address = excluded.score_bank_branch_address,
+                    overall_extraction_score = excluded.overall_extraction_score,
+                    em_bg_number = excluded.em_bg_number,
+                    em_amendment_date = excluded.em_amendment_date,
+                    em_validity_date = excluded.em_validity_date,
+                    em_claim_period = excluded.em_claim_period,
+                    em_amount = excluded.em_amount,
+                    em_po_no = excluded.em_po_no,
+                    em_vendor_name = excluded.em_vendor_name,
+                    em_bank_branch_address = excluded.em_bank_branch_address,
+                    target_metadata = excluded.target_metadata,
+                    ground_truth_metadata = excluded.ground_truth_metadata,
+                    field_discrepancies = excluded.field_discrepancies,
+                    graded_at = datetime('now')
+                """,
+                (
+                    run_id,
+                    fs["score_bg_number"], fs["score_amendment_date"], fs["score_validity_date"],
+                    fs["score_claim_period"], fs["score_amount"], fs["score_po_no"],
+                    fs["score_vendor_name"], fs["score_bank_branch_address"], overall_ext,
+                    em["em_bg_number"], em["em_amendment_date"], em["em_validity_date"],
+                    em["em_claim_period"], em["em_amount"], em["em_po_no"],
+                    em["em_vendor_name"], em["em_bank_branch_address"],
+                    json.dumps(target_meta), json.dumps(ground_meta), json.dumps(eval_res["field_discrepancies"]),
+                ),
+            )
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
         return {"status": "scored", "overall_score": overall, "scores": scores}

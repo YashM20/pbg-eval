@@ -555,6 +555,10 @@ def replay_run(run_id: int, config: Config | None = None) -> int:
     master_text = row["master_text"]
     vendor_text = row["vendor_text"]
 
+    if not backend_doc_id or not backend_job_id:
+        conn.close()
+        raise ValueError(f"Run {run_id} does not have valid backend document/job IDs to replay.")
+
     client = BackendClient(config)
     client.login()
 
