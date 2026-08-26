@@ -128,3 +128,28 @@ async def test_api_batch_lifecycle():
         ver_runs_resp = await client.get(f"/api/versions/{label}/runs")
         assert ver_runs_resp.status_code == 200
         assert len(ver_runs_resp.json()["runs"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_api_upload_batch(monkeypatch):
+    from pbg_eval.config import get_config
+    import app.routers.evaluations as eval_router
+
+    config = get_config()
+    monkeypatch.setattr(config, "allow_prod", True)
+    monkeypatch.setattr(eval_router, "execute_run_batch", lambda *args, **kwargs: None)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        files = [
+            ("files", ("sample_bg.pdf", b"%PDF-1.4 dummy content", "application/pdf")),
+        ]
+        data = {
+            "version": f"test-upload-{uuid.uuid4().hex[:6]}",
+            "repeats": "1",
+            "allow_prod": "true",
+            "auto_grade": "false",
+        }
+        resp = await client.post("/api/batches/upload", files=files, data=data)
+        assert resp.status_code == 200
+        assert "batch_id" in resp.json()
+

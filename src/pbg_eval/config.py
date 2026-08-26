@@ -36,6 +36,10 @@ class Config(BaseSettings):
     backend_password: str = Field(default="")
     allow_prod: bool = Field(default=False)
 
+    # OCR and Inference Service Endpoints
+    paddleocr_endpoints: str = Field(default="http://52.188.20.251:8002", alias="paddleocr_endpoints")
+    ollama_endpoints: str = Field(default="http://52.188.20.54:11434", alias="ollama_endpoints")
+
     # Gemini configuration
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-2.0-flash", alias="GEMINI_MODEL")

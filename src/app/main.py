@@ -13,7 +13,7 @@ if str(_src) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import automation, evaluations, studio, synthetic
+from app.routers import arena, automation, evaluations, observer, playground, studio, synthetic
 from pbg_eval.config import get_config
 from pbg_eval.db import connect
 from pbg_eval.services.auto_eval import AutoEvalDaemon
@@ -29,8 +29,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="PBG Eval",
-    description="Autonomous evaluation platform for PBG semantic comparison with auto fault detection, prompt studio, and healing.",
-    version="0.4.0",
+    description="Autonomous evaluation platform for PBG semantic comparison with auto fault detection, prompt studio, playground, and multi-model arena.",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
@@ -46,8 +46,11 @@ app.include_router(evaluations.router)
 app.include_router(studio.router)
 app.include_router(synthetic.router)
 app.include_router(automation.router)
+app.include_router(playground.router)
+app.include_router(arena.router)
+app.include_router(observer.router)
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "pbg-eval", "version": "0.4.0"}
+    return {"status": "ok", "service": "pbg-eval", "version": "0.5.0"}

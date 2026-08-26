@@ -63,23 +63,23 @@ def create_batch(body: BatchRequest, background_tasks: BackgroundTasks):
 
     ver_label = body.version or get_next_version_label()
     job_id, _ = start_run(
-        ver_label,
-        docs_dir,
-        body.repeats,
-        body.allow_prod,
-        body.prompt_hash,
-        body.model_config_json,
-        config,
+        version_label=ver_label,
+        docs_dir=docs_dir,
+        repeats=body.repeats,
+        allow_prod=body.allow_prod,
+        prompt_hash=body.prompt_hash,
+        model_config=body.model_config_json,
+        config=config,
     )
     background_tasks.add_task(
         execute_run_batch,
-        job_id,
-        ver_label,
-        docs_dir,
-        body.repeats,
-        body.allow_prod,
-        body.auto_grade,
-        config,
+        job_id=job_id,
+        version_label=ver_label,
+        docs_dir=docs_dir,
+        repeats=body.repeats,
+        allow_prod=body.allow_prod,
+        auto_grade=body.auto_grade,
+        config=config,
     )
     return BatchStartResponse(batch_id=job_id)
 
@@ -113,23 +113,23 @@ async def upload_batch(
 
     ver_label = version.strip() if version and version.strip() else get_next_version_label()
     job_id, _ = start_run(
-        ver_label,
-        batch_dir,
-        repeats,
-        allow_prod,
-        prompt_hash,
-        model_config_json,
-        config,
+        version_label=ver_label,
+        docs_dir=batch_dir,
+        repeats=repeats,
+        allow_prod=allow_prod,
+        prompt_hash=prompt_hash,
+        model_config=model_config_json,
+        config=config,
     )
     background_tasks.add_task(
         execute_run_batch,
-        job_id,
-        ver_label,
-        batch_dir,
-        repeats,
-        allow_prod,
-        auto_grade,
-        config,
+        job_id=job_id,
+        version_label=ver_label,
+        docs_dir=batch_dir,
+        repeats=repeats,
+        allow_prod=allow_prod,
+        auto_grade=auto_grade,
+        config=config,
     )
     return BatchStartResponse(batch_id=job_id)
 
